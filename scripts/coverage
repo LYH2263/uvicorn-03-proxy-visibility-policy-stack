@@ -1,0 +1,8 @@
+#!/bin/sh -e
+
+export SOURCE_FILES="uvicorn tests"
+
+set -x
+
+uv run coverage combine
+uv run coverage report
