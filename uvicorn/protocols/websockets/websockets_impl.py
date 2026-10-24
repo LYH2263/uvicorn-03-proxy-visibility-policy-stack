@@ -30,12 +30,12 @@ from uvicorn.config import Config, UvicornDeprecationWarning
 from uvicorn.logging import TRACE_LOG_LEVEL
 from uvicorn.protocols.utils import (
     ClientDisconnected,
-    get_client_addr,
     get_local_addr,
     get_path_with_query_string,
     get_remote_addr,
     is_ssl,
 )
+from uvicorn.proxy_policy import access_client_addr
 from uvicorn.server import ServerState
 
 warnings.warn(
@@ -279,7 +279,7 @@ class WebSocketProtocol(WebSocketServerProtocol):
             if message["type"] == "websocket.accept":
                 self.logger.info(
                     '%s - "WebSocket %s" [accepted]',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                 )
                 self.initial_response = None
@@ -296,7 +296,7 @@ class WebSocketProtocol(WebSocketServerProtocol):
             elif message["type"] == "websocket.close":
                 self.logger.info(
                     '%s - "WebSocket %s" 403',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                 )
                 self.initial_response = (http.HTTPStatus.FORBIDDEN, [], b"")
@@ -306,7 +306,7 @@ class WebSocketProtocol(WebSocketServerProtocol):
             elif message["type"] == "websocket.http.response.start":
                 self.logger.info(
                     '%s - "WebSocket %s" %d',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                     message["status"],
                 )

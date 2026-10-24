@@ -24,15 +24,28 @@ class ProxyHeadersMiddleware:
     def __init__(self, app: ASGI3Application, trusted_hosts: list[str] | str = "127.0.0.1") -> None:
         self.app = app
         self.trusted_hosts = _TrustedHosts(trusted_hosts)
+        # Keep the raw baseline around so the request-level policy stack can
+        # rebuild a merged trust table on top of it.
+        self.baseline_trusted_hosts: list[str] | str = trusted_hosts
 
     async def __call__(self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
         if scope["type"] == "lifespan":
+            # Lifespan never subscribes to the request/connection policy stack.
             return await self.app(scope, receive, send)
+
+        # Imported lazily to avoid an import cycle between the policy stack and
+        # the trust primitives defined in this module.
+        from uvicorn.proxy_policy import effective_proxy_policy
+
+        policy = effective_proxy_policy(self.baseline_trusted_hosts, proxy_headers_enabled=True)
 
         client_addr = scope.get("client")
         client_host = client_addr[0] if client_addr else None
 
-        if client_host in self.trusted_hosts:
+        # Peer trust at middleware entry and the XFF reverse walk are distinct
+        # judgments but both read the *merged* trust view.  `force_distrust`
+        # fails the peer gate, `force_trust` passes it unconditionally.
+        if policy.peer_is_trusted(client_host):
             x_forwarded_proto_value: bytes | None = None
             x_forwarded_for_values: list[bytes] = []
             for name, value in scope["headers"]:
@@ -41,7 +54,9 @@ class ProxyHeadersMiddleware:
                 elif name == b"x-forwarded-for":
                     x_forwarded_for_values.append(value)
 
-            if x_forwarded_proto_value is not None:
+            # Scope writes fork on scope_rewrite: `client_only`, `scheme_only`,
+            # `both` and `none` must not be conflated.
+            if policy.rewrite_scheme and x_forwarded_proto_value is not None:
                 x_forwarded_proto = x_forwarded_proto_value.decode("latin1").strip()
 
                 if x_forwarded_proto in {"http", "https", "ws", "wss"}:
@@ -50,9 +65,9 @@ class ProxyHeadersMiddleware:
                     else:
                         scope["scheme"] = x_forwarded_proto
 
-            if x_forwarded_for_values:
+            if policy.rewrite_client and x_forwarded_for_values:
                 x_forwarded_for = b", ".join(x_forwarded_for_values).decode("latin1")
-                host, port = self.trusted_hosts.get_trusted_client_address(x_forwarded_for)
+                host, port = policy.trusted_hosts.get_trusted_client_address(x_forwarded_for)
 
                 if host:
                     # If the x-forwarded-for header is empty then host is an empty string.

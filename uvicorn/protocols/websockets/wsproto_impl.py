@@ -26,12 +26,12 @@ from uvicorn.config import Config
 from uvicorn.logging import TRACE_LOG_LEVEL
 from uvicorn.protocols.utils import (
     ClientDisconnected,
-    get_client_addr,
     get_local_addr,
     get_path_with_query_string,
     get_remote_addr,
     is_ssl,
 )
+from uvicorn.proxy_policy import access_client_addr
 from uvicorn.server import ServerState
 
 
@@ -384,7 +384,7 @@ class WSProtocol(asyncio.Protocol):
             if message["type"] == "websocket.accept":
                 self.logger.info(
                     '%s - "WebSocket %s" [accepted]',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                 )
                 subprotocol = message.get("subprotocol")
@@ -408,7 +408,7 @@ class WSProtocol(asyncio.Protocol):
                 self.queue.put_nowait({"type": "websocket.disconnect", "code": 1006})
                 self.logger.info(
                     '%s - "WebSocket %s" 403',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                 )
                 self.handshake_complete = True
@@ -425,7 +425,7 @@ class WSProtocol(asyncio.Protocol):
                     raise RuntimeError(msg % message["status"])
                 self.logger.info(
                     '%s - "WebSocket %s" %d',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.client),
                     get_path_with_query_string(self.scope),
                     message["status"],
                 )

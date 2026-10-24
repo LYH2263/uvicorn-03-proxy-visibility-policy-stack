@@ -22,7 +22,8 @@ from uvicorn._types import (
 from uvicorn.config import Config
 from uvicorn.logging import TRACE_LOG_LEVEL
 from uvicorn.protocols.http.flow_control import HIGH_WATER_LIMIT, FlowControl, service_unavailable
-from uvicorn.protocols.utils import get_client_addr, get_local_addr, get_path_with_query_string, get_remote_addr, is_ssl
+from uvicorn.protocols.utils import get_local_addr, get_path_with_query_string, get_remote_addr, is_ssl
+from uvicorn.proxy_policy import access_client_addr
 from uvicorn.server import ServerState
 
 
@@ -196,6 +197,8 @@ class ZttpProtocol(asyncio.Protocol):
                     message_event=asyncio.Event(),
                     expect_100_continue=event.expect_continue,
                     on_response=self.on_response_complete,
+                    config=self.config,
+                    transport_client=self.client,
                 )
                 if event.end_stream:
                     self.cycle.more_body = False
@@ -331,6 +334,8 @@ class RequestResponseCycle:
         message_event: asyncio.Event,
         expect_100_continue: bool,
         on_response: Callable[..., None],
+        config: Config,
+        transport_client: tuple[str, int] | None,
     ) -> None:
         self.scope = scope
         self.conn = conn
@@ -342,6 +347,10 @@ class RequestResponseCycle:
         self.default_headers = default_headers
         self.message_event = message_event
         self.on_response = on_response
+        # Process baseline for the proxy-policy stack and the never-rewritten
+        # transport peer captured at connection time.
+        self.config = config
+        self.transport_client = transport_client
 
         # Connection state
         self.disconnected = False
@@ -463,7 +472,7 @@ class RequestResponseCycle:
             if self.access_log:
                 self.access_logger.info(
                     '%s - "%s %s HTTP/%s" %d',
-                    get_client_addr(self.scope),
+                    access_client_addr(self.config, self.scope, self.transport_client),
                     self.scope["method"],
                     get_path_with_query_string(self.scope),
                     self.scope["http_version"],
